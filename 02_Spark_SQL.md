@@ -32,10 +32,38 @@ Spark can read and write data in many formats: CSV, Parquet, JSON, ORC, Delta, a
 
 ### Reading Data
 
+#### CSV with Options
+
 ```python
-# CSV
+# Basic CSV
 df = spark.read.option("header", "true").csv("/path/to/file.csv")
 
+# CSV with multiple options
+df = spark.read \
+    .option("header", "true") \
+    .option("sep", ",") \
+    .option("comment", "#") \
+    .option("inferSchema", "true") \
+    .csv("/path/to/file.csv")
+
+# CSV ignoring lines starting with #
+df = spark.read.option("header", "true").option("comment", "#").csv("/path/to/file.csv")
+```
+
+**Common CSV Options:**
+
+| Option | Default | Example | Purpose |
+|--------|---------|---------|---------|
+| `header` | false | "true" | First row contains column names |
+| `sep` | "," | ";" or "\t" | Field delimiter |
+| `comment` | None | "#" | Skip lines starting with # |
+| `inferSchema` | false | "true" | Auto-detect column types |
+| `escape` | "\\" | "\"" | Escape character for quotes |
+| `nullValue` | "" | "N/A" or "NULL" | How NULL is represented |
+| `quoteAll` | false | "true" | Quote all fields |
+| `multiLine` | false | "true" | Allow multiline fields |
+
+```python
 # Parquet (fast, recommended)
 df = spark.read.parquet("/path/to/file.parquet")
 
@@ -110,6 +138,37 @@ df.write.mode("overwrite") \
     .partitionBy("country", "year") \
     .parquet("/output/data")
 ```
+
+### Writing CSV with Format Options
+
+When writing CSV files, use `.format("csv")` with `.option()` to customize formatting:
+
+```python
+# CSV with tab separator, no header, null as "n/a"
+df.write.mode("error") \
+    .format("csv") \
+    .option("sep", "\t") \
+    .option("header", "false") \
+    .option("nullValue", "n/a") \
+    .save("/path/to/output.csv")
+
+# CSV with pipe separator and header
+df.write.mode("overwrite") \
+    .format("csv") \
+    .option("sep", "|") \
+    .option("header", "true") \
+    .save("/path/to/output.csv")
+```
+
+**CSV Write Options:**
+
+| Option | Default | Example | Purpose |
+|--------|---------|---------|---------|
+| `sep` | `,` | `"\t"` or `"\|"` | Column separator/delimiter |
+| `header` | `false` | `"true"` or `"false"` | Include column names as first row |
+| `nullValue` | (empty string) | `"n/a"` or `"NULL"` | How to represent NULL values in output |
+| `quoteAll` | `false` | `"true"` | Quote all fields (vs. only strings with special chars) |
+| `escape` | `\` | `"\\"` | Escape character within quoted fields |
 
 ### On Databricks
 

@@ -119,13 +119,6 @@ result = df.groupBy("category").count()
 result.show()
 ```
 
-### Recommended Resources
-1. [Databricks: Spark Connect](https://docs.databricks.com/en/dev-tools/spark-connect/index.html)
-2. [Apache Spark: Spark Connect](https://spark.apache.org/docs/latest/spark-connect-overview.html)
-3. [Databricks: Remote Development](https://docs.databricks.com/en/dev-tools/index.html)
-
----
-
 ## Objective 2: Describe different deployment mode types (Client, Cluster, Local)
 
 ### Core Concept
@@ -300,13 +293,6 @@ result.show()
 # - You won't see print() output on your machine
 # - Results written to HDFS or database (not printed)
 ```
-
-### Recommended Resources
-1. [Apache Spark: Submitting Applications](https://spark.apache.org/docs/latest/submitting-applications.html)
-2. [Databricks: Cluster Mode Configuration](https://docs.databricks.com/en/compute/clusters/configure.html)
-3. [Databricks: Jobs and Automation](https://docs.databricks.com/en/jobs/index.html)
-
----
 
 ## Summary: Section 6 Key Takeaways
 
