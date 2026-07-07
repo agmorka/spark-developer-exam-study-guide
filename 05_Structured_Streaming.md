@@ -106,13 +106,6 @@ query = df_filtered.writeStream \
 query.awaitTermination()
 ```
 
-### Recommended Resources
-1. [Apache Spark: Structured Streaming Guide](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html)
-2. [Databricks: Structured Streaming](https://docs.databricks.com/en/structured-streaming/index.html)
-3. [Databricks: Streaming Fundamentals](https://docs.databricks.com/en/notebooks/streaming.html)
-
----
-
 ## Objective 2: Create and write Streaming DataFrames with output modes and sinks
 
 ### Core Concept
@@ -239,13 +232,6 @@ query_complete = df_stream.groupBy(window("timestamp", "10 seconds")).count() \
 print("Streaming jobs started. Check console output.")
 ```
 
-### Recommended Resources
-1. [Apache Spark: Output Modes](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html#output-modes)
-2. [Databricks: Streaming Sinks](https://docs.databricks.com/en/structured-streaming/output-modes.html)
-3. [Apache Spark: Kafka Integration](https://spark.apache.org/docs/latest/structured-streaming-kafka-integration.html)
-
----
-
 ## Objective 3: Perform basic operations on Streaming DataFrames
 
 ### Core Concept
@@ -352,13 +338,6 @@ query2 = df_windowed.writeStream.format("console").start()
 
 print("Streaming operations running. Check console.")
 ```
-
-### Recommended Resources
-1. [Apache Spark: Streaming DataFrame Operations](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html#operations-on-streaming-dataframes)
-2. [Databricks: Streaming Transformations](https://docs.databricks.com/en/structured-streaming/operations.html)
-3. [Apache Spark: Windowing](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html#window-operations-on-event-time)
-
----
 
 ## Objective 4: Perform Streaming Deduplication with and without watermark
 
@@ -484,13 +463,6 @@ query3 = result.writeStream.format("console").start()
 
 print("Streaming jobs running.")
 ```
-
-### Recommended Resources
-1. [Apache Spark: Streaming Deduplication](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html#deduplication)
-2. [Apache Spark: Event Time and Watermarks](https://spark.apache.org/docs/latest/structured-streaming-programming-guide.html#handling-event-time-and-late-data)
-3. [Databricks: Streaming State Management](https://docs.databricks.com/en/structured-streaming/stateful-processing.html)
-
----
 
 ## Summary: Section 5 Key Takeaways
 

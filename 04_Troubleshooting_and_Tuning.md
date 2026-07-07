@@ -62,7 +62,26 @@ df.rdd.mapPartitions(lambda x: [sum(1 for _ in x)]).collect()
 # Fix 1: Repartition on a high-cardinality column
 df_repart = df.repartition(200, "user_id")  # Distributes by user_id hash
 
-# Fix 2: Sample skewed data and repartition separately
+# Fix 2: Salting — add random prefix to skewed keys to spread them across partitions
+from pyspark.sql.functions import rand, concat, lit
+
+skewed_col = "category"
+num_salt_buckets = 10
+
+# Add random salt to the skewed key
+df_salted = df.withColumn(
+    "salted_key",
+    concat(col(skewed_col), lit("_"), (rand() * num_salt_buckets).cast("int"))
+)
+
+# Now repartition by salted key (spreads "hot_category" across 10 partitions)
+df_salted_repartitioned = df_salted.repartition(num_salt_buckets * 20, "salted_key")
+
+# Use salted key in join, then remove salt if needed
+result = df_salted_repartitioned.join(other_df_also_salted, "salted_key")
+result = result.drop("salted_key")  # Remove salt column
+
+# Fix 3: Sample skewed data and repartition separately
 skewed_col = "category"
 df_skewed = df.filter(df[skewed_col] == "hot_category")
 df_other = df.filter(df[skewed_col] != "hot_category")
@@ -70,6 +89,11 @@ df_other = df.filter(df[skewed_col] != "hot_category")
 df_skewed_repart = df_skewed.repartition(100, "id")
 df_combined = df_skewed_repart.union(df_other)
 ```
+
+**When to use Salting:**
+- Join has skewed key (one value appears in 80% of rows)
+- Repartitioning alone doesn't solve skew
+- You need fine-grained control over data distribution
 
 ### Reduce Shuffles
 
@@ -93,12 +117,80 @@ result = result.filter(result["count"] > 10)
 - **Spark UI shows partition sizes** — Click "Stages" tab to see skew
 - **Monitor cluster utilization** — If some executors idle, repartition
 
+### Broadcast Join Configuration
+
+Spark automatically broadcasts small DataFrames during joins. You can control the threshold:
+
+```python
+# Set broadcast threshold to 20 MB (values must include unit: b, kb, mb, gb)
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "20mb")
+
+# Disable auto-broadcast (use sort-merge join always)
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "-1")
+
+# Force broadcast on a specific DataFrame
+from pyspark.sql.functions import broadcast
+
+small_df = spark.read.parquet("/path/to/small_data")
+result = large_df.join(broadcast(small_df), "key", "inner")
+```
+
+**Note:** The value must include a unit suffix ("20mb" not just 20). Default is "10mb".
+
+### Out-of-Memory (OOM) Prevention Strategies (Q55)
+
+**OOM happens when:**
+- Executors run out of memory during shuffle, join, or broadcast
+- Caching a DataFrame larger than available storage memory
+- Accumulating data on driver during `.collect()`
+
+**Prevention strategies:**
+
+| Strategy | Example | Effect |
+|----------|---------|--------|
+| **Reduce partition size** | Increase partitions from 50 to 200 | Each partition processes less data per executor |
+| **Reduce broadcast size** | Increase `autoBroadcastJoinThreshold` to 500mb | Only small tables are broadcast; large ones use sort-merge join |
+| **Increase parallelism** | Set `default.parallelism` to 16 | More tasks in parallel = smaller chunks per task |
+| **Avoid string concatenation** | Use `concat()` or SQL string functions instead of Python loops | Python loops build full strings in memory before Spark processes |
+| **Serialization compression** | Use `MEMORY_ONLY_SER` storage level | Compress cached data to fit more in memory |
+| **Limit cores per executor** | Set `spark.executor.cores = 4` (vs 8) | Fewer concurrent tasks per executor = less peak memory |
+
+**Code examples:**
+
+```python
+# ✗ OOM Risk: Concatenating in Python builds entire string in memory
+result = ""
+for row in df.collect():  # Pulls ALL data to driver!
+    result += row["name"] + " "  # String grows in memory
+
+# ✓ CORRECT: Use Spark's concat() function
+from pyspark.sql.functions import concat, col, lit
+df_concat = df.select(concat(col("first"), lit(" "), col("last")))
+
+# ✗ OOM Risk: Caching 500GB on 100GB cluster
+df.cache()  # If df is 500GB, won't fit; data evicted constantly
+
+# ✓ CORRECT: Cache only what you use
+df_filtered = df.filter(df.age > 30)  # Smaller dataset
+df_filtered.cache()
+
+# ✗ OOM Risk: collect() on huge DataFrame
+large_result = df.collect()  # Pulls entire DataFrame to driver memory!
+
+# ✓ CORRECT: Use limit() or write to storage
+large_result = df.limit(1000).collect()  # Get first 1000 rows instead
+# OR
+df.write.parquet("/output/result")  # Write to distributed storage
+```
+
 ### Common Mistakes
 
 1. **Too many partitions** — Each partition = overhead; 10,000 small partitions waste resources
 2. **Too few partitions** — Can't parallelize; one partition on 100 executors wastes 99
 3. **Repartitioning before write** — Write to Parquet with 1000s partitions = 1000s files (slow to read)
 4. **Not checking for skew** — Assuming data is even distributed
+5. **Using `.collect()` on large DataFrames** — Pulls all data to driver; causes OOM
+6. **Broadcasting huge DataFrames** — If table > autoBroadcastJoinThreshold, don't broadcast; use sort-merge join
 
 ### Code Example: Detect and Fix Skew
 
@@ -248,13 +340,6 @@ result.explain(mode="formatted")  # Shows execution plan
 print("Check Spark UI Stages tab for 'Skew Join Optimization' or 'Coalesce Partitions'")
 ```
 
-### Recommended Resources
-1. [Databricks: Adaptive Query Execution](https://docs.databricks.com/en/performance/aqe.html)
-2. [Apache Spark: SQL Query Optimization](https://spark.apache.org/docs/latest/sql-performance-tuning.html)
-3. [Databricks: Query Optimization](https://docs.databricks.com/en/sql/query-optimizer.html)
-
----
-
 ## Objective 3: Perform logging and monitoring of Spark applications
 
 ### Core Concept
@@ -348,11 +433,6 @@ Only 4 of 100 executors are doing work; 96 idle!
 **Fix:**
 - Repartition: `df.repartition(200)`
 - Use more executors only if needed (costs money)
-
-### Recommended Resources
-1. [Databricks: Cluster Logging](https://docs.databricks.com/en/admin/workspace-settings/clusters.html)
-2. [Apache Spark: Monitoring Guide](https://spark.apache.org/docs/latest/monitoring.html)
-3. [Databricks: Performance Monitoring](https://docs.databricks.com/en/performance/monitoring.html)
 
 ### Spark UI Deep Dive: Understanding Performance Metrics
 

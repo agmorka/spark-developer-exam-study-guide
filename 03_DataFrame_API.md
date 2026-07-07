@@ -53,6 +53,19 @@ df_reduced = df.drop("email")
 df_reduced = df.drop("email", "phone", "address")
 ```
 
+#### Select with Column Negation (~)
+
+Use the `~` operator to exclude columns in a select:
+
+```python
+from pyspark.sql.functions import col
+
+# Select all columns EXCEPT these using negation (~)
+df_selected = df.select(~col("predError"), ~col("productId"), ~col("value"))
+
+# Equivalent to: df.drop("predError", "productId", "value")
+```
+
 #### Rename Columns
 
 ```python
@@ -88,17 +101,63 @@ df_filtered = df.filter("age > 30 AND salary > 50000")
 df_filtered = df.filter(col("department").isin("Engineering", "Sales", "Marketing"))
 ```
 
-#### Drop Rows with Missing Values
+##### Transforming Columns with withColumn()
+
+When you want to add or replace a column, use `.withColumn()` (not direct assignment like `df["col"] = value`).
 
 ```python
-# Drop any row with at least one NULL
-df_clean = df.na.drop()
+# ✓ CORRECT: Using withColumn()
+df = df.withColumn("new_column", value_expression)
 
-# Drop rows where specific columns are NULL
-df_clean = df.na.drop(subset=["email"])
+# ✗ WRONG: Direct assignment (doesn't work in Spark)
+df["new_column"] = value_expression  # This won't do what you expect!
 
-# Drop only if ALL values are NULL (rarely useful)
-df_clean = df.na.drop(how="all")
+# ✓ CORRECT: Drop old column, add new one
+df = df.drop("old_col").withColumn("new_col", some_transformation)
+
+# ✓ CORRECT: Replace existing column
+df = df.withColumn("existing_col", new_value)  # Overwrites original
+```
+
+**Why?** DataFrames are immutable. `.withColumn()` returns a NEW DataFrame with the column added/replaced.
+
+#### Unix Timestamp and Date Conversion
+
+Convert between Unix timestamps (seconds since 1970-01-01) and dates/strings:
+
+```python
+from pyspark.sql.functions import col, unix_timestamp, from_unixtime, to_timestamp, to_date
+
+df = spark.createDataFrame([
+    (1, "2021-01-15 10:30:00", 1609459200),
+], ["id", "date_string", "unix_ts"])
+
+# String → Unix timestamp
+df.withColumn("ts", unix_timestamp(col("date_string"), "yyyy-MM-dd HH:mm:ss")).show()
+
+# Unix timestamp → Date string (specify format)
+df.withColumn("date_str", from_unixtime(col("unix_ts"), "yyyy-MM-dd")).show()
+
+# String → Date object
+df.withColumn("date_obj", to_date(col("date_string"))).show()
+
+# String → Timestamp with time zone
+df.withColumn("ts_obj", to_timestamp(col("date_string"))).show()
+```
+
+**⚠️ Common mistakes (Q14):**
+```python
+# WRONG: Direct assignment + wrong method
+df["transactionTimestamp"] = unix_timestamp("transactionDate", "yyyy-MM-dd")
+
+# WRONG: unix_timestamp on string without col() wrapper
+transactionsDf = transactionsDf.drop("transactionDate") \
+    .withColumn("transactionTimestamp", unix_timestamp("transactionDate"))  # Error: col already dropped!
+
+# ✓ CORRECT: wrap in col(), drop AFTER adding new column
+transactionsDf = transactionsDf \
+    .withColumn("transactionTimestamp", unix_timestamp(col("transactionDate"), "yyyy-MM-dd HH:mm")) \
+    .drop("transactionDate")
 ```
 
 ### Array Operations
@@ -141,6 +200,112 @@ df_exploded.show()
 # |  2| cooking|
 ```
 
+### String Functions
+
+Common functions for manipulating string columns:
+
+```python
+from pyspark.sql.functions import col, length, lower, upper, substr, trim, regexp_replace, regexp_extract, concat, lit
+
+df = spark.createDataFrame([
+    (1, "  Alice Smith  ", "alice@example.com"),
+    (2, "BOB JONES", "bob@example.com"),
+], ["id", "name", "email"])
+
+# String case transformation
+df.select(lower(col("name")), upper(col("email"))).show()  # lowercase, UPPERCASE
+
+# String length
+df.select(length(col("name")).alias("name_length")).show()
+
+# Trim whitespace
+df.select(trim(col("name")).alias("name_trimmed")).show()
+
+# Substring: substr(col, start, length)
+df.select(substr(col("name"), 1, 5).alias("first_5_chars")).show()
+
+# Replace text: regexp_replace(col, pattern, replacement)
+df.select(regexp_replace(col("email"), "@.*", "@example.net").alias("new_email")).show()
+
+# Extract pattern: regexp_extract(col, pattern, group_index)
+df.select(regexp_extract(col("email"), "(.+)@", 1).alias("username")).show()  # Group 1 = before @
+
+# Concatenate strings
+df.select(concat(col("name"), lit(" - "), col("email")).alias("full_info")).show()
+
+# Remove vowels (common exam trick)
+df.select(
+    length(regexp_replace(lower(col("name")), "[aeiou\\s]", "")).alias("consonant_count")
+).show()
+
+# Filter with string matching
+df.filter(col("email").contains("example")).show()  # Find emails containing "example"
+df.filter(col("name").like("A%")).show()            # Names starting with "A"
+
+# Split string into array with limit (max 4 elements)
+df.select(split(col("itemName"), "[\s\-]", 4).alias("words")).show()
+# "Thick Coat for Walking" → ["Thick", "Coat", "for", "Walking in the Snow"]
+```
+
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `lower(col)` | Convert to lowercase | `lower(col("Name"))` → "name" |
+| `upper(col)` | Convert to uppercase | `upper(col("Name"))` → "NAME" |
+| `length(col)` | String length | `length(col("Name"))` → 4 |
+| `substr(col, start, len)` | Extract substring | `substr(col("Name"), 1, 2)` → "Na" |
+| `trim(col)` | Remove leading/trailing spaces | `trim(col("  name  "))` → "name" |
+| `split(col, pattern, limit)` | Split string into array with max limit | `split(col("text"), "[,\s]", 4)` → max 4 elements |
+| `col.contains(pattern)` | Check if string contains substring (for filtering) | `col("Email").contains("@")` → true/false |
+| `col.like(pattern)` | SQL LIKE matching (% = any chars, _ = single char) | `col("Name").like("A%")` → names starting with "A" |
+| `regexp_replace(col, pattern, repl)` | Replace matching pattern | `regexp_replace(col("Name"), "a", "X")` → "NXme" |
+| `regexp_extract(col, pattern, idx)` | Extract matched group | `regexp_extract(col("Email"), "(.+)@", 1)` → username |
+### Math Functions
+
+Transform numeric columns with mathematical operations:
+
+```python
+from pyspark.sql.functions import col, cos, sin, tan, sqrt, abs, round, degrees, radians, pow
+
+df = spark.createDataFrame([
+    (1, 45.0, 2.0),
+    (2, 90.0, 3.0),
+], ["id", "angle_rad", "num"])
+
+# Trigonometric functions
+df.select(cos(col("angle_rad")).alias("cos_val")).show()        # Cosine
+df.select(sin(col("angle_rad")).alias("sin_val")).show()        # Sine
+df.select(tan(col("angle_rad")).alias("tan_val")).show()        # Tangent
+
+# Degree/radian conversion + trigonometry
+df.select(
+    degrees(col("angle_rad")).alias("degrees"),  # Convert radians to degrees
+    cos(col("angle_rad")).alias("cos_rad")       # Cosine of radians
+).show()
+
+# Example from Q35: convert to degrees, then take cosine, round to 2 decimals
+df.select(
+    round(cos(degrees(col("angle_rad"))), 2).alias("cos_degrees")
+).show()
+
+# Other math functions
+df.select(sqrt(col("num")).alias("sqrt")).show()       # Square root
+df.select(abs(col("num")).alias("abs")).show()         # Absolute value
+df.select(round(col("num"), 1).alias("rounded")).show() # Round to N decimals
+df.select(pow(col("num"), 2).alias("squared")).show()  # Power (num^2)
+```
+
+| Function | Purpose | Example |
+|----------|---------|---------|
+| `cos(col)` | Cosine (radians) | `cos(0)` → 1.0 |
+| `sin(col)` | Sine (radians) | `sin(PI/2)` → 1.0 |
+| `tan(col)` | Tangent (radians) | `tan(PI/4)` → 1.0 |
+| `degrees(col)` | Convert radians to degrees | `degrees(PI)` → 180.0 |
+| `radians(col)` | Convert degrees to radians | `radians(180)` → PI |
+| `sqrt(col)` | Square root | `sqrt(16)` → 4.0 |
+| `abs(col)` | Absolute value | `abs(-5)` → 5 |
+| `round(col, d)` | Round to d decimals | `round(3.14159, 2)` → 3.14 |
+| `pow(col, n)` | Power (col^n) | `pow(2, 3)` → 8 |
+
 ### On Databricks
 
 - **Column expressions**: Use `col()` to reference columns; SQL strings also work
@@ -153,6 +318,7 @@ df_exploded.show()
 2. **Using string column names incorrectly** — `df.filter("age > 30")` works, but `col("age") > 30` is more flexible
 3. **Assuming `withColumn()` modifies in place** — It doesn't; reassign: `df = df.withColumn(...)`
 4. **Not using `alias()` after `explode()`** — Exploded column needs a name
+5. **Chaining `.alias()` directly on `explode()` outside `select()`** — ❌ WRONG: `df.explode("attributes").alias("attribute")`. The method doesn't exist on DataFrame. ✓ CORRECT: `df.select(explode(col("attributes")).alias("attribute"))`
 
 ### Code Example: Full Column/Row Manipulation
 
@@ -186,13 +352,6 @@ df_exploded = df_clean.select("id", "name", explode(col("interests")).alias("int
 
 df_exploded.show()
 ```
-
-### Recommended Resources
-1. [Apache Spark: DataFrame API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.html)
-2. [Apache Spark: Column Expressions](https://spark.apache.org/docs/latest/sql-programming-guide.html#untyped-dataframe-operations)
-3. [Databricks: DataFrame Operations](https://docs.databricks.com/en/develop/dataframes.html)
-
----
 
 ## Objective 2: Perform data deduplication and validation operations
 
@@ -314,13 +473,6 @@ print("=== NULL counts ===")
 df.select([count(when(col(c).isNull(), 1)).alias(f"{c}_nulls") for c in df.columns]).show()
 ```
 
-### Recommended Resources
-1. [Apache Spark: dropDuplicates](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.dropDuplicates.html)
-2. [Databricks: Data Quality](https://docs.databricks.com/en/notebooks/data-quality.html)
-3. [Apache Spark: NULL Handling](https://spark.apache.org/docs/latest/sql-programming-guide.html)
-
----
-
 ## Objective 3: Perform aggregate operations (count, approximate count distinct, mean, summary)
 
 ### Core Concept
@@ -398,10 +550,14 @@ print(f"Approx: {approx}")  # Close to exact, much faster
 
 ### Summary Statistics
 
+#### Using describe() vs summary()
+
 ```python
 from pyspark.sql.functions import describe, mean, stddev, percentile_approx
 
-# Describe all numeric columns
+# BOTH methods return statistics on numeric columns:
+
+# Method 1: describe() — returns count, mean, stddev, min, max
 df.describe().show()
 
 # Output (min, max, mean, stddev, count):
@@ -415,6 +571,31 @@ df.describe().show()
 # |    max| 99.99 | 999.99 |
 # +-------+-------+--------+
 
+# Method 2: summary() — specify which stats to include (more flexible) (Q32)
+df.summary("count", "mean", "stddev", "25%", "50%", "75%", "min", "max").show()
+
+# Output (with percentiles):
+# +-------+-------+--------+
+# |summary|  price| amount |
+# +-------+-------+--------+
+# |  count|  1000 |  1000  |
+# |   mean| 45.32 | 234.67 |
+# |  stddev| 12.45| 56.78  |
+# |   25%  | 25.12 | 145.34 |
+# |   50%  | 45.32 | 234.67 |
+# |   75%  | 65.43 | 323.90 |
+# |    min| 10.00 | 50.00  |
+# |    max| 99.99 | 999.99 |
+# +-------+-------+--------+
+```
+
+**Difference:**
+- `.describe()` — Always returns [count, mean, stddev, min, max]
+- `.summary()` — You choose which statistics to include; more flexible for custom percentiles
+
+#### Custom Aggregations
+
+```python
 # Custom summary: percentiles
 df.agg(
     percentile_approx("price", 0.25).alias("p25"),
@@ -474,13 +655,6 @@ df.filter(col("salary") > 60000).groupBy("department").agg(
     count("*").alias("high_earners")
 ).show()
 ```
-
-### Recommended Resources
-1. [Apache Spark: Aggregation Functions](https://spark.apache.org/docs/latest/sql-programming-guide.html#aggregations)
-2. [Apache Spark: groupBy and agg](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.groupBy.html)
-3. [Databricks: Aggregation Performance](https://docs.databricks.com/en/performance/index.html)
-
----
 
 ## Window Functions: Advanced Aggregations Over Data Partitions
 
@@ -666,13 +840,6 @@ print("\n=== Top Earner per Department ===")
 df_top.show()
 ```
 
-### Recommended Resources
-1. [Apache Spark: Window Functions](https://spark.apache.org/docs/latest/sql-programming-guide.html#window-functions)
-2. [Databricks: Window Functions](https://docs.databricks.com/en/sql/language-manual/sql-ref-window-functions.html)
-3. [Apache Spark: Window Specification](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.Window.html)
-
----
-
 ## Objective 4: Manipulate and utilize Date data type
 
 ### Core Concept
@@ -797,13 +964,6 @@ df = df.withColumn("future_date", date_add("str_date", 30))
 df.show()
 ```
 
-### Recommended Resources
-1. [Apache Spark: Date and Timestamp Functions](https://spark.apache.org/docs/latest/sql-programming-guide.html#working-with-dates-and-timestamps)
-2. [Databricks: Working with Dates](https://docs.databricks.com/en/sql/language-manual/sql-ref-functions-builtin.html)
-3. [Apache Spark: to_date and to_timestamp](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.to_date.html)
-
----
-
 ## Objective 5: Combine DataFrames (joins and unions)
 
 ### Core Concept
@@ -874,19 +1034,34 @@ result = large_df.join(broadcast(small_df), "id", "inner")
 - Other DataFrame is huge
 - Join is a bottleneck
 
-### Union
+### Union Operations
 
-Stack DataFrames vertically (must have same columns).
+Stack DataFrames vertically (append rows). Different methods handle column mismatches differently.
+
+| Method | Behavior | Use Case |
+|--------|----------|----------|
+| `.union(other)` | **By position** — ignores column names, combines 1st col with 1st col, 2nd with 2nd | Both have SAME column names in SAME order |
+| `.unionByName(other)` | **By name** — matches columns by name, not position | Column names match but order may differ |
+| `.unionByName(other, allowMissingColumns=True)` | **By name, allow missing** — columns in one DF but not other get filled with NULL | Different column sets; fill missing with NULL |
+
+**Example:**
 
 ```python
-# Union: keep all duplicates
-df_combined = df1.union(df2)
+# DF1: columns [A, B, C] with data [1, 2, 3]
+# DF2: columns [C, B, A] with data [10, 20, 30]  (different order, same names)
 
-# Union all (same as union)
-df_combined = df1.unionByName(df2)  # Matches columns by name
+# .union() — ignores names, uses position
+result = df1.union(df2)
+# Result: [1, 2, 3] and [10, 20, 30]  (A=10, B=20, C=30)
 
-# Union distinct: remove duplicate rows
-df_combined = df1.unionByName(df2, allowMissingColumns=True)
+# .unionByName() — matches by name
+result = df1.unionByName(df2)
+# Result: [1, 2, 3] and [30, 20, 10]  (A=30, B=20, C=10, reordered)
+
+# DF3: columns [A, B, D] (missing C from DF1)
+# .unionByName(allowMissingColumns=True)
+result = df1.unionByName(df3, allowMissingColumns=True)
+# Result: [1, 2, 3, NULL] and [30, 20, NULL, 40]  (adds missing C column with NULLs)
 ```
 
 ### On Databricks
@@ -894,13 +1069,16 @@ df_combined = df1.unionByName(df2, allowMissingColumns=True)
 - **INNER join is fastest** — Filters rows before shuffle
 - **Use broadcast for small tables** — Can be 10x faster than regular join
 - **Avoid CROSS joins on large data** — Cartesian product explodes in size
+- **Use `.union()` when column names differ but positions match** — Treats DataFrames by position
+- **Use `.unionByName()` when column names match but order differs** — Matches by name
 
 ### Common Mistakes
 
 1. **Not joining on the right columns** — Causes unexpected results or Cartesian product
 2. **Forgetting to specify join type** — Default is INNER; if you wanted LEFT, you get surprises
 3. **Broadcast a huge DataFrame** — Causes out-of-memory errors; only broadcast small data
-4. **Union with different column counts** — Both DataFrames must have same columns
+4. **Using `.union()` when you mean `.unionByName()`** — Data is appended by position, not name; wrong columns combine
+5. **Using `.unionByName()` without setting `allowMissingColumns=True`** — Fails if column sets don't match exactly
 
 ### Code Example: Joins and Unions
 
@@ -947,13 +1125,6 @@ combined = users.union(users2)
 combined.show()
 ```
 
-### Recommended Resources
-1. [Apache Spark: SQL Joins](https://spark.apache.org/docs/latest/sql-programming-guide.html#joins)
-2. [Apache Spark: DataFrame Join Methods](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.join.html)
-3. [Databricks: Join Performance Tuning](https://docs.databricks.com/en/performance/index.html)
-
----
-
 ## Objective 6: Manage input and output operations (reading, writing, schemas)
 
 ### Core Concept
@@ -962,17 +1133,72 @@ When you write a DataFrame, you can specify (or let Spark infer) the schema. Rea
 ### Writing with Schema
 
 ```python
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType
 
 # Define a schema
 schema = StructType([
     StructField("user_id", IntegerType(), False),  # False = not nullable
     StructField("name", StringType(), True),       # True = nullable
     StructField("age", IntegerType(), True),
+    StructField("salary", FloatType(), True),      # Floating-point column
 ])
 
 # Write with this schema
 df.write.mode("overwrite").schema(schema).parquet("/output/data")
+```
+
+#### Creating DataFrames with explicit types (Q9)
+
+Use `createDataFrame()` with a schema that includes `FloatType` and other data types:
+
+```python
+from pyspark.sql.types import StructType, StructField, IntegerType, FloatType, StringType
+
+# Method 1: createDataFrame with data and schema
+data = [
+    (1, "Alice", 30, 75000.50),
+    (2, "Bob", 25, 65000.25),
+    (3, "Charlie", 35, 85000.75),
+]
+
+schema = StructType([
+    StructField("id", IntegerType(), False),
+    StructField("name", StringType(), True),
+    StructField("age", IntegerType(), True),
+    StructField("salary", FloatType(), True),      # Float: 32-bit precision
+])
+
+df = spark.createDataFrame(data, schema=schema)
+df.show()
+# Output:
+# +---+-------+---+----------+
+# | id|   name|age|    salary|
+# +---+-------+---+----------+
+# |  1|  Alice| 30|75000.496...| (note: FloatType loses precision vs DoubleType)
+# |  2|    Bob| 25|65000.246...|
+# |  3|Charlie| 35|85000.746...|
+# +---+-------+---+----------+
+
+# Method 2: Print schema to verify types
+df.printSchema()
+# root
+#  |-- id: integer (nullable = false)
+#  |-- name: string (nullable = true)
+#  |-- age: integer (nullable = true)
+#  |-- salary: float (nullable = true)
+```
+
+**⚠️ Important:**
+- **FloatType** = 32-bit IEEE 754 (less precise; use for memory efficiency)
+- **DoubleType** = 64-bit IEEE 754 (more precise; default for decimal data)
+
+```python
+# If you need precision for money, use DoubleType instead:
+from pyspark.sql.types import DoubleType
+
+schema = StructType([
+    StructField("salary", DoubleType(), True),  # Better for financial data
+])
 ```
 
 ### Reading with Schema
@@ -1040,13 +1266,6 @@ df_read.printSchema()
 df_read.show()
 ```
 
-### Recommended Resources
-1. [Apache Spark: Loading Data Programmatically](https://spark.apache.org/docs/latest/sql-data-sources-load-save-sql.html)
-2. [Databricks: Reading and Writing Data](https://docs.databricks.com/en/develop/dataframes.html#read-data)
-3. [Apache Spark: Data Source Options](https://spark.apache.org/docs/latest/sql-data-sources.html)
-
----
-
 ## Objective 7: Perform operations on DataFrames (sorting, iterating, printing schema, conversion)
 
 ### Core Concept
@@ -1055,7 +1274,7 @@ Common DataFrame operations: sort rows, iterate through them, inspect schema, co
 ### Sorting
 
 ```python
-from pyspark.sql.functions import col, desc
+from pyspark.sql.functions import col, desc, asc, desc_nulls_last, asc_nulls_first
 
 df = spark.read.csv("/data/employees.csv", header=True)
 
@@ -1067,6 +1286,30 @@ df_sorted = df.sort(col("salary").desc())
 
 # Sort by multiple columns
 df_sorted = df.sort(col("department"), col("salary").desc())
+
+# Sort with NULL handling
+df_sorted = df.sort(desc_nulls_last("salary"))      # Largest first, NULLs last
+df_sorted = df.sort(asc_nulls_first("salary"))      # Smallest first, NULLs first
+```
+
+**NULL ordering options:**
+
+| Function | Behavior |
+|----------|----------|
+| `asc()` | Ascending; NULLs first (default) |
+| `desc()` | Descending; NULLs last (default) |
+| `asc_nulls_first()` | Ascending; NULLs first |
+| `asc_nulls_last()` | Ascending; NULLs last |
+| `desc_nulls_first()` | Descending; NULLs first |
+| `desc_nulls_last()` | Descending; NULLs last |
+
+**⚠️ Common mistake:**
+```python
+# WRONG - these conflict!
+df.sort(desc("value"), asc_nulls_first("error"))  # Conflicting: desc defaults to NULLs last, but then you say NULLs first
+
+# RIGHT - be explicit about NULL placement
+df.sort(desc_nulls_last("value"), asc_nulls_first("error"))
 ```
 
 ### Print Schema
@@ -1095,6 +1338,52 @@ row_list = df.collect()
 print(row_list)
 ```
 
+### Sample, Limit, and Get Single Rows
+
+**Action Methods (trigger execution):**
+
+```python
+# .first() — get first row (ACTION)
+first_row = df.first()  # Returns single Row object
+print(first_row)
+
+# .take(n) — get first n rows (ACTION)
+first_5 = df.take(5)  # Returns list of 5 Row objects
+
+# .head(n) — same as .take(n)
+first_3 = df.head(3)
+```
+
+**Transformation Methods (lazy):**
+
+```python
+# .limit(n) — limit rows (TRANSFORMATION)
+df_limited = df.limit(100)  # Lazy; doesn't execute yet
+
+# .sample(withReplacement, fraction, seed=None) — random sample (TRANSFORMATION)
+# Returns approximately fraction * total rows
+df_sampled = df.sample(False, 0.5)  # 50% of rows, no duplicates
+df_sampled_dup = df.sample(True, 0.5)  # 50% of rows, may have duplicates
+
+# With seed for reproducibility
+df_sample_seed = df.sample(False, 0.1, seed=42)  # Always same 10%
+```
+
+| Method | Type | Returns | Use Case |
+|--------|------|---------|----------|
+| `.first()` | Action | Single Row | Get one row (e.g., check first value) |
+| `.take(n)` | Action | List[Row] | Get first n rows for inspection |
+| `.head(n)` | Action | List[Row] | Alias for .take(n) |
+| `.limit(n)` | Transformation | DataFrame | Limit rows before write/collect |
+| `.sample(with_repl, fraction)` | Transformation | DataFrame | Random sample (~50%, 10%, etc.) |
+
+**⚠️ Key Differences:**
+
+- `.first()` and `.take()` are **ACTIONS** — they execute the job immediately!
+- `.limit()` is **LAZY** — it doesn't execute until you call an action
+- `.sample(True, 0.5)` = **with replacement** (can have duplicates, faster)
+- `.sample(False, 0.5)` = **without replacement** (all unique rows)
+
 ### Convert to/from Python Lists
 
 ```python
@@ -1122,6 +1411,8 @@ df_from_list = spark.createDataFrame(list_data, schema=["id", "name"])
 1. **Calling `.collect()` on huge DataFrames** — Tries to fit all data in driver memory
 2. **Not sorting before checking order** — Results may be in any order unless explicitly sorted
 3. **Assuming `.show()` shows all rows** — `.show()` only prints first 20
+4. **Confusing `.limit()` (transformation) with `.take()` (action)** — `.limit()` is lazy, `.take()` executes immediately
+5. **Using `.sample(False, fraction)` when duplicates are acceptable** — For speed, use `.sample(True, fraction)` to allow duplicates (30% faster typically)
 
 ### Code Example: Sorting, Iteration, Schema
 
@@ -1158,13 +1449,6 @@ rows_dicts = df.collect()
 for row_dict in rows_dicts:
     print(row_dict.asDict())
 ```
-
-### Recommended Resources
-1. [Databricks: DataFrame Operations](https://docs.databricks.com/en/notebooks/notebooks-use-cases.html)
-2. [Apache Spark: DataFrame API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.DataFrame.html)
-3. [Databricks: Data Inspection Techniques (2024)](https://www.databricks.com/blog/dataframe-inspection-patterns)
-
----
 
 ## Objective 8: Create and invoke user-defined functions (UDFs)
 
@@ -1314,13 +1598,6 @@ print("=== SQL UDF ===")
 result.show()
 ```
 
-### Recommended Resources
-1. [Apache Spark: User Defined Functions](https://spark.apache.org/docs/latest/sql-programming-guide.html#creating-dataframes-with-udfs)
-2. [Apache Spark: Python UDF API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.udf.html)
-3. [Databricks: UDF Performance](https://docs.databricks.com/en/develop/python/custom-python-functions.html)
-
----
-
 ## Objective 9: Describe different types of variables (broadcast variables and accumulators)
 
 ### Core Concept
@@ -1359,9 +1636,31 @@ result = large_df.join(broadcast(lookup_df), "code", "left")
 
 **Solution:** Use an accumulator.
 
+**Why not iterrows() or pandas?** The pandas/iterrows approach won't work in Spark because:
+- `iterrows()` is **NOT distributed** — it runs on the driver only, loads all data into memory
+- `foreach()` with accumulators is the **distributed way** — each executor processes its partition and increments the counter
+
 ```python
 from pyspark.sql.functions import col, when
 
+# ✗ WRONG: iterrows() is slow and not distributed
+counter = 0
+for index, row in itemsDf.iterrows():  # Runs on driver only! Not parallel
+    if 'Inc.' in row['supplier']:
+        counter += 1
+
+# ✓ CORRECT: foreach() + accumulator is distributed across executors
+accum = sc.accumulator(0)
+
+def check_if_inc_in_supplier(row):
+    if 'Inc.' in row['supplier']:
+        accum.add(1)
+
+itemsDf.foreach(check_if_inc_in_supplier)  # Each executor processes its partition
+print(accum.value)  # Get the total from driver
+```
+
+```python
 # Create accumulator for counting errors
 error_count = sc.accumulator(0)
 
@@ -1374,10 +1673,10 @@ def count_errors(row):
 # Read data
 df = spark.read.csv("/data/data.csv", header=True)
 
-# Process each row (incrementing accumulator)
+# Process each row (incrementing accumulator) — DISTRIBUTED
 df.rdd.map(count_errors).collect()
 
-# Get total error count
+# Get total error count from driver
 print(f"Total errors: {error_count.value}")
 ```
 
@@ -1386,12 +1685,14 @@ print(f"Total errors: {error_count.value}")
 - **Broadcast variables**: Use for lookup tables, ML models, configuration
 - **Accumulators**: Use for counting errors, events, metrics
 - **DataFrame API prefers native operations**: Use `.groupBy()` instead of accumulators when possible
+- **Accumulator reliability**: Only **successful task attempts** contribute to accumulators. Failed attempts (retried tasks) don't increment the counter. This ensures accurate counts despite executor failures.
 
 ### Common Mistakes
 
 1. **Modifying broadcast variable** — It's immutable; you can't update it
 2. **Accessing accumulator in wrong context** — Executors can add; only driver can read `.value`
 3. **Using accumulator for filtering** — Use `.filter()` instead; accumulators are for monitoring
+4. **Expecting accumulators to count failed attempts** — Spark retries failed tasks; only the final successful attempt increments the accumulator. You won't see duplicate counts from retries.
 
 ### Code Example: Broadcast and Accumulators
 
@@ -1436,13 +1737,6 @@ def validate_code(code):
 df.rdd.map(lambda row: validate_code(row.country_code)).collect()
 print(f"Invalid codes: {invalid_count.value}")
 ```
-
-### Recommended Resources
-1. [Apache Spark: Broadcast Variables](https://spark.apache.org/docs/latest/rdd-programming-guide.html#broadcast-variables)
-2. [Apache Spark: Accumulators](https://spark.apache.org/docs/latest/rdd-programming-guide.html#accumulators-broadcast-variables)
-3. [Databricks: Shared Variables](https://docs.databricks.com/en/develop/dataframes.html)
-
----
 
 ## Objective 10: Describe the purpose and implementation of broadcast joins
 
@@ -1546,13 +1840,6 @@ result_broadcast.explain()
 # Both produce same result, but broadcast is faster
 result_broadcast.show()
 ```
-
-### Recommended Resources
-1. [Databricks: Broadcast Joins](https://docs.databricks.com/en/performance/broadcast-joins.html)
-2. [Apache Spark: Broadcast Joins](https://spark.apache.org/docs/latest/sql-performance-tuning.html#broadcast-hint)
-3. [Apache Spark: broadcast Function](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.broadcast.html)
-
----
 
 ## Summary: Section 3 Key Takeaways
 

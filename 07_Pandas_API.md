@@ -152,13 +152,6 @@ pandas_df = psdf.to_pandas()
 print(type(pandas_df))  # <class 'pandas.core.frame.DataFrame'>
 ```
 
-### Recommended Resources
-1. [Databricks: Pandas API on Spark](https://docs.databricks.com/en/pyspark/pandas-api/index.html)
-2. [Apache Spark: Pandas API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.pandas/)
-3. [Databricks: Working with Pandas API](https://docs.databricks.com/en/develop/dataframes.html)
-
----
-
 ## Objective 2: Create and invoke Pandas UDFs
 
 ### Core Concept
@@ -371,13 +364,6 @@ Spark Series
 ```
 
 Arrow avoids Python pickle serialization, which is slow.
-
-### Recommended Resources
-1. [Databricks: Pandas UDFs](https://docs.databricks.com/en/udf/pandas/index.html)
-2. [Apache Spark: Pandas UDF API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.pandas_udf.html)
-3. [Apache Spark: Arrow and Serialization](https://spark.apache.org/docs/latest/api/python/reference/pyspark.sql/api/pyspark.sql.functions.pandas_udf.html)
-
----
 
 ## Summary: Section 7 Key Takeaways
 

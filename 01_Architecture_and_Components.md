@@ -75,13 +75,6 @@ print(f"Executors: {sc.defaultParallelism}")
 print(f"Master: {sc.master}")
 ```
 
-### Recommended Resources
-1. [Databricks: Getting Started with Apache Spark](https://www.databricks.com/spark/getting-started-with-apache-spark)
-2. [Apache Spark: Cluster Overview](https://spark.apache.org/docs/latest/cluster-overview.html)
-3. [Databricks: Best practices for performance efficiency](https://docs.databricks.com/aws/en/lakehouse-architecture/performance-efficiency/best-practices)
-
----
-
 ## Objective 2: Identify the role of core components of Apache Spark's Architecture
 
 ### Core Concept
@@ -153,13 +146,6 @@ print(f"Executor memory: {spark.conf.get('spark.executor.memory')}")
 print(f"Driver memory: {spark.conf.get('spark.driver.memory')}")
 ```
 
-### Recommended Resources
-1. [Databricks: Spark Architecture Concepts](https://docs.databricks.com/en/compute/clusters/index.html)
-2. [Apache Spark Cluster Architecture](https://spark.apache.org/docs/latest/cluster-overview.html#components)
-3. [DataStax: Understanding Spark Executors](https://www.datastax.com/blog/apache-spark-performance-tuning-101) (2024)
-
----
-
 ## Objective 3: Describe the architecture of Apache Spark (DataFrame, Dataset, SparkSession, caching, storage levels, garbage collection)
 
 ### Core Concept
@@ -225,6 +211,21 @@ print(f"First row: {df.first()}")  # Uses cached data, much faster
 | `DISK_ONLY` | No | Yes | No | Huge data that doesn't fit in memory |
 
 **On Databricks:** Use `MEMORY_AND_DISK` (default) unless you have a specific reason.
+
+### Spark Memory Management
+
+Each executor's memory is divided into three categories:
+
+| Category | Purpose | Size | Details |
+|----------|---------|------|---------|
+| **Execution Memory** | Sorting, shuffles, joins, aggregations | 60% (configurable) | Temporary memory for transformations |
+| **Storage Memory** | Caching DataFrames, broadcast variables | 40% (configurable) | Used by `.cache()` and `.persist()` |
+| **Reserved Memory** | Spark overhead | 300 MB (fixed) | System memory; not available to user code |
+
+**Key Points:**
+- If Execution memory is full, Spark spills to disk (slower)
+- If Storage memory is full, cached data is evicted (recalculated on next use)
+- You cannot cache more data than Storage memory allows
 
 ### Garbage Collection (GC)
 
@@ -367,6 +368,44 @@ print("Check the Spark UI in Databricks to see Jobs, Stages, and Tasks!")
 - View "Stages" tab (each shuffle boundary = 1 stage)
 - View "Tasks" tab (each partition's work = 1 task)
 
+### Configuring Spark with spark.conf.set()
+
+You can tune Spark's behavior by setting configuration options. **⚠️ IMPORTANT: All parameter values must be strings, including numbers.**
+
+```python
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.appName("ConfigExample").getOrCreate()
+
+# ✓ CORRECT: Parameters are strings
+spark.conf.set("spark.sql.shuffle.partitions", "20")      # String: "20"
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", "20mb")  # String: "20mb"
+spark.conf.set("spark.default.parallelism", "16")          # String: "16"
+
+# ✗ WRONG: Don't pass integers directly (will fail or be ignored)
+spark.conf.set("spark.sql.shuffle.partitions", 20)         # Integer: Causes error!
+spark.conf.set("spark.sql.autoBroadcastJoinThreshold", 20)  # Integer: Missing "mb" unit!
+
+# Reading config
+shuffle_partitions = spark.conf.get("spark.sql.shuffle.partitions")
+print(f"Shuffle partitions: {shuffle_partitions}")
+```
+
+**Common Spark Configuration Options:**
+
+| Option | Default | Example | Purpose |
+|--------|---------|---------|---------|
+| `spark.sql.shuffle.partitions` | 200 | "20" | Number of partitions after shuffle (groupBy, join) |
+| `spark.sql.autoBroadcastJoinThreshold` | "10mb" | "20mb" | Max size to broadcast in joins; use "mb" suffix |
+| `spark.default.parallelism` | Cores | "16" | Default parallelism for RDD operations |
+| `spark.executor.memory` | "1g" | "4g" | Memory per executor (set at session creation, not conf.set) |
+| `spark.driver.memory` | "1g" | "4g" | Driver memory (set at session creation) |
+| `spark.sql.cbo.enabled` | false | "true" | Cost-based optimizer (for better query plans) |
+
+**When to change these:**
+- `spark.sql.shuffle.partitions` — Too high = overhead; too low = slow shuffles. 20-200 typically optimal.
+- `spark.sql.autoBroadcastJoinThreshold` — Lower for small clusters (less memory), higher for broadcast-friendly workloads.
+
 ---
 
 ## RDD vs. DataFrame: Understanding Spark Data Structures
@@ -497,13 +536,6 @@ print(f"DataFrame result: {[row[0] for row in df_result]}")  # [900, 1225, 1600,
 # Same result, but DataFrame is 10x faster and more readable
 ```
 
-### Recommended Resources
-1. [Databricks: Understanding Jobs, Stages, Tasks](https://docs.databricks.com/en/performance/monitoring.html)
-2. [Apache Spark: Monitoring & Instrumentation](https://spark.apache.org/docs/latest/monitoring.html)
-3. [Databricks: Spark UI Guide (2023)](https://docs.databricks.com/en/clusters/index.html)
-
----
-
 ## Objective 5: Configure Spark partitioning in distributed data processing (shuffles and partitions)
 
 ### Core Concept
@@ -534,17 +566,24 @@ A shuffle moves data between partitions. This happens when you:
 
 ### Configuring Partitions
 
-| Operation | What It Does |
-|-----------|--------------|
-| `.repartition(n)` | Shuffle data to create exactly `n` new partitions |
-| `.coalesce(n)` | Combine partitions without shuffling (faster, but data is imbalanced) |
+| Operation | Signature | What It Does |
+|-----------|-----------|--------------|
+| `.repartition(n)` | `repartition(numPartitions)` | Shuffle data to create exactly `n` new partitions |
+| `.repartition(cols)` | `repartition(*cols)` | Repartition data by column values (e.g., by storeId, date) |
+| `.coalesce(n)` | `coalesce(numPartitions)` | Combine partitions without shuffling (takes INT only, NOT columns) |
 
 ```python
-# 100 partitions becomes 10 (shuffles data)
+# Repartition by number only
 df_repartitioned = df.repartition(10)
 
-# 100 partitions becomes 10 (no shuffle, but executor 1 might have 90 partitions)
-df_coalesced = df.coalesce(10)
+# Repartition by column(s) — shuffles data across those columns
+df_repartitioned_by_cols = df.repartition("storeId", "transactionDate")
+
+# Coalesce by number only — NO column parameter
+df_coalesced = df.coalesce(10)  # ✓ Correct: takes integer only
+
+# ❌ WRONG: df.coalesce(14, ("storeId", "transactionDate"))
+# → TypeError: coalesce() takes only integer, not tuple of columns
 ```
 
 ### The `spark.sql.shuffle.partitions` Config
@@ -599,13 +638,6 @@ print(f"After repartition(20): {df_repartitioned.rdd.getNumPartitions()}")  # 20
 df_coalesced = df.coalesce(10)
 print(f"After coalesce(10): {df_coalesced.rdd.getNumPartitions()}")  # 10
 ```
-
-### Recommended Resources
-1. [Databricks: Partitioning Best Practices](https://docs.databricks.com/en/performance/partitioning.html)
-2. [Apache Spark: RDD Partitions](https://spark.apache.org/docs/latest/rdd-programming-guide.html#resilient-distributed-datasets-rdds)
-3. [Databricks: Shuffle Performance](https://docs.databricks.com/en/performance/shuffle.html)
-
----
 
 ## Objective 6: Describe the execution patterns of Apache Spark (actions, transformations, lazy evaluation)
 
@@ -674,6 +706,257 @@ count = df3.count()  # Uses cache (fast)
 2. **Efficiency** — Spark can skip unnecessary work if you don't ask for the result
 3. **Pipelining** — Multiple operations can run in one pass through the data
 
+### Predicate Pushdown (Filter Optimization)
+
+**What is it?** Spark automatically moves `.filter()` operations as early as possible, before reading/joining large datasets.
+
+**Why it matters:** You read less data = faster queries.
+
+```python
+# Without pushdown (slow):
+df = spark.read.parquet("/huge/dataset")  # Read all 1TB
+df_filtered = df.filter(df["department"] == "Sales")  # Then filter
+result = df_filtered.groupBy("department").count()
+
+# Spark optimization (with pushdown, fast):
+# Spark moves the filter BEFORE reading from Parquet
+# Result: Only reads Sales department rows (~10 GB instead of 1TB)
+df = spark.read.parquet("/huge/dataset").filter(df["department"] == "Sales")
+result = df.groupBy("department").count()
+
+# SQL (automatic pushdown):
+spark.sql("""
+    SELECT department, COUNT(*)
+    FROM huge_dataset
+    WHERE department = 'Sales'  -- Spark pushes this filter to the Parquet reader
+    GROUP BY department
+""").show()
+```
+
+**When Pushdown Happens:**
+- Filters are pushed down to Parquet/Delta/CSV readers when possible
+- Joins with filters are optimized to filter early
+- Column pruning: Spark only reads columns you actually use
+
+**When Pushdown DOESN'T Happen:**
+- After a shuffle operation (like `groupBy` or `join`): can't push past shuffle
+- After a UDF: can't optimize through custom code
+- Complex nested filters: Spark can't always push these through
+
+### Catalyst Optimizer
+
+**What is it?** Spark's query optimization engine that converts your code into an optimized execution plan.
+
+**How it works:**
+
+1. **Logical Plan** — Your code as written (what to do)
+   - Transforms stored in order: read → filter → select → groupBy
+   - **Not optimized** — just a tree of operations
+
+2. **Optimizer** — Catalyst improves the logical plan
+   - Pushes filters down
+   - Eliminates unnecessary columns
+   - Combines operations
+   - Reorders joins
+
+3. **Physical Plan** — Optimized instructions (how to do it efficiently)
+   - Decides which executor runs which task
+   - Chooses join algorithm (broadcast, sort-merge, hash)
+   - Specifies shuffle or no-shuffle operations
+
+**Example:**
+
+```python
+# Your code (Logical Plan):
+df = spark.read.parquet("/huge/data")  # Billions of rows
+df = df.filter(df["dept"] == "Sales")  # Only 1% of rows
+df = df.select("name", "salary")
+result = df.groupBy("dept").agg({"salary": "avg"})
+
+# Catalyst's optimized plan:
+# 1. Push filter to Parquet reader (read only Sales rows, ~10GB)
+# 2. Column pruning (only read dept, salary, name columns)
+# 3. ReOrder groupBy to be more efficient
+# 4. Result: 1000x faster than reading all data first
+```
+
+### Stages and Shuffles with Disk I/O (Q43, Q47)
+
+**What are stages?** A stage is a set of transformations that can run without shuffling data. Different stages CAN run in **parallel**.
+
+```
+Stage 1 (Read → Filter → Select): Can run in parallel on all partitions
+  └─ No shuffle yet
+Stage 2 (GroupBy → Agg): Different stage; requires shuffle from Stage 1
+  └─ Shuffle: Write Stage 1 output to disk, read into Stage 2
+Stage 3 (OrderBy): Another stage
+  └─ Shuffle: Write Stage 2 output to disk, read into Stage 3
+```
+
+**Key points:**
+- Stages within a job CAN execute in parallel if they don't depend on each other
+- BUT: Stages separated by shuffles MUST wait (shuffle is a barrier)
+- Each shuffle involves **disk I/O and network transfers** (very expensive)
+
+**Example (Q43 - Stages execute in parallel):**
+
+```
+Job: df.groupBy("dept").count().orderBy("count")
+├─ Stage 1: Read → GroupBy partial aggregate (tasks 1-100 run in PARALLEL)
+├─ SHUFFLE: Write to disk, network transfer
+├─ Stage 2: GroupBy final aggregate (tasks 101-150 run in PARALLEL)
+├─ SHUFFLE: Write to disk, network transfer
+└─ Stage 3: OrderBy → Collect (tasks 151-160 run in PARALLEL)
+
+Stages 1, 2, 3 run sequentially (because of shuffles)
+But within each stage, tasks run in parallel
+```
+
+**Shuffle mechanics (Q47 - Shuffles write to disk):**
+
+```
+Without Shuffle (Map):
+Partition 1 on Executor A: Process locally, output to memory
+
+With Shuffle (Map → Shuffle → Reduce):
+Partition 1 on Executor A:
+  - Process data
+  - Write sorted output to LOCAL DISK (not memory!)
+  
+Executor B reads from Executor A's disk, brings data over network
+```
+
+### Cluster Manager and Driver/Executor Lifecycle (Q49, Q52)
+
+**Cluster Manager:** Allocates resources (CPU cores, memory) to Spark. Examples: YARN, Kubernetes, Standalone, Mesos.
+
+**Driver Lifecycle (Q49):**
+1. **Start** — User submits Spark job; driver process starts
+2. **Create SparkContext** — Driver initializes SparkContext (or SparkSession)
+3. **Contact Cluster Manager** — Driver asks for executors ("I need 10 executors with 4 cores each")
+4. **Executor Launch** — Cluster Manager receives request from driver and allocates resources
+5. **Execute Job** — Driver sends tasks to executors; monitors completion
+6. **End** — When job finishes, driver shuts down (or goes idle in REPL)
+
+**Executor Lifecycle (Q52):**
+1. **Launch** — Cluster manager starts executor JVM on worker node (initiated by driver)
+2. **Register** — Executor registers with driver
+3. **Execute Tasks** — Receives and runs tasks from driver
+4. **Stop** — Executor stops when application completes (or removed by cluster manager)
+
+**Key relationships:**
+- **Driver ← (sends tasks to) → Executors** — One-way: driver tells executors what to do
+- **Cluster Manager ← (requests resources from) ← Driver** — Driver asks for resources
+- **Multiple executors, ONE driver** — The driver is a single point of coordination
+
+```python
+# On Databricks, cluster manager is handled for you:
+# - Driver automatically creates SparkSession
+# - Cluster manager (Unity Catalog, Kubernetes) handles executor launch
+
+from pyspark.sql import SparkSession
+
+spark = SparkSession.builder.appName("MyApp").getOrCreate()
+# Internally:
+# 1. Driver process started
+# 2. SparkContext created
+# 3. Driver contacts cluster manager
+# 4. Executors launched
+```
+
+### Actions Return Data to Driver (Q51)
+
+**Actions like `.collect()` bring data from executors to driver memory.**
+
+```python
+# Transform (runs on executors, distributed)
+df = spark.read.csv("/huge/file.csv")
+df_filtered = df.filter(df["salary"] > 50000)
+
+# Action: .collect() brings results to driver
+results = df_filtered.collect()  # All results now in driver's memory!
+
+# If results are huge (10GB), driver runs OOM
+```
+
+**⚠️ IMPORTANT:**
+- `.collect()` is dangerous on large datasets
+- `.show()` only shows first 20 rows (safe)
+- `.count()` returns just one number (safe)
+- `.take(n)` returns first n rows (safer than collect)
+
+---
+df = df.select("name", "salary")       # Only 2 columns
+result = df.groupBy("name").sum("salary")
+
+# Catalyst optimization:
+# ✗ WRONG: Read → Filter → Select → GroupBy (reads everything)
+# ✓ RIGHT: 
+#   1. Push filter to Parquet reader (read only 1% of rows)
+#   2. Prune to only 2 columns (don't load all columns)
+#   3. Then groupBy (aggregates on small data)
+# RESULT: 100x faster (minimal I/O)
+```
+
+**You can see the optimized plan:**
+
+```python
+# View logical and physical plans
+df.explain()  # Prints both plans
+df.explain(extended=True)  # Even more detail
+
+# Output shows:
+# == Logical Plan ==
+# (Original operations in tree form)
+# == Physical Plan ==
+# (Optimized with code generation, broadcast hints, etc.)
+```
+
+**Catalyst Optimizations:**
+
+| Technique | What it does | Example |
+|-----------|-------------|---------|
+| **Predicate Pushdown** | Moves filters earlier | Filter before join instead of after |
+| **Column Pruning** | Read only columns you use | Select 2 columns → don't load others |
+| **Constant Folding** | Evaluate constants at compile time | `1 + 2 < value` becomes `3 < value` |
+| **Join Reordering** | Reorder joins for efficiency | Small join first, then large |
+| **Null Propagation** | Eliminate unnecessary operations | `col > 5 AND col IS NULL` = always false |
+
+
+
+**What is Lineage?** The complete record of all transformations applied to a DataFrame/RDD.
+
+**Why it matters:** When an executor fails, Spark uses lineage to recalculate lost partitions instead of restarting from scratch.
+
+```python
+# Lineage example:
+df1 = spark.read.parquet("/data/input")  # Lineage: [Read Parquet]
+df2 = df1.filter(df1["age"] > 30)         # Lineage: [Read Parquet → Filter age > 30]
+df3 = df2.select("name", "salary")        # Lineage: [Read Parquet → Filter age > 30 → Select]
+df4 = df3.groupBy("name").sum("salary")   # Lineage: [... → Select → GroupBy Sum]
+result = df4.collect()                    # Action: executes the entire lineage
+
+# If an executor dies during Select operation:
+# - Spark doesn't restart from Parquet read
+# - It recalculates just the failed partition using the lineage
+# - Other partitions continue normally
+```
+
+**Storage Levels and Fault Tolerance:**
+
+```python
+# MEMORY_ONLY: Fast but risky
+df.persist(StorageLevel.MEMORY_ONLY)
+# If executor dies, must recalculate entire DataFrame from lineage
+
+# MEMORY_AND_DISK: Balanced (recommended)
+df.persist(StorageLevel.MEMORY_AND_DISK)
+# Spills to disk if memory full; survives executor failures
+
+# If using RDD:
+rdd.persist(StorageLevel.MEMORY_AND_DISK)  # Stores lineage for recovery
+```
+
 ### Common Mistakes
 
 1. **Calling `.collect()` on huge DataFrames** — Tries to move all rows to your driver; crashes if data > driver memory
@@ -712,13 +995,6 @@ print("Cached. Now fast:")
 df_grouped.show()  # Uses cache
 total = df_grouped.count()  # Uses cache (much faster)
 ```
-
-### Recommended Resources
-1. [Apache Spark: Lazy Evaluation](https://spark.apache.org/docs/latest/rdd-programming-guide.html#basics)
-2. [Apache Spark: RDD Transformations](https://spark.apache.org/docs/latest/rdd-programming-guide.html#transformations)
-3. [Databricks: DataFrame Operations](https://docs.databricks.com/en/develop/dataframes.html)
-
----
 
 ## Objective 7: Identify the features of Apache Spark Modules (Core, Spark SQL, DataFrames, Pandas API on Spark, Structured Streaming, MLlib)
 
@@ -865,13 +1141,6 @@ result.show()
 # lr = LogisticRegression()
 # model = lr.fit(...)
 ```
-
-### Recommended Resources
-1. [Apache Spark: Spark SQL Overview](https://spark.apache.org/docs/latest/sql-index.html)
-2. [Apache Spark: Structured APIs](https://spark.apache.org/docs/latest/rdd-programming-guide.html#overview)
-3. [Apache Spark: MLlib Guide](https://spark.apache.org/docs/latest/ml-guide.html)
-
----
 
 ## Summary: Section 1 Key Takeaways
 
