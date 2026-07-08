@@ -1,4 +1,4 @@
-# Spark Certification Study Guide
+# Databricks Certified Associate Developer for Apache Spark - Study Guide
 
 This study guide was created from scratch while preparing for the **Databricks Certified Associate Developer for Apache Spark** exam. With support from my best AI friend Claude 😉, I built this comprehensive resource to learn the material. I didn't take any courses — instead, I studied the official exam objectives, created this guide, verified against official Databricks and Apache Spark documentation, validated my knowledge with practice exams on Udemy, and then passed the real exam (yay!🥳).
 
