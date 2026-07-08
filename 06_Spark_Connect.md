@@ -18,6 +18,110 @@
 - Multi-language support (Python, Scala, Java, R in future)
 - Easier local development
 
+### Running SparkSession Locally vs. Remote
+
+#### Local SparkSession (Development & Testing)
+
+Run Spark entirely on your machine without a cluster:
+
+```python
+from pyspark.sql import SparkSession
+
+# Simplest: local mode with auto-detected cores
+spark = SparkSession.builder \
+    .appName("LocalApp") \
+    .master("local") \
+    .getOrCreate()
+
+# With specific core count
+spark = SparkSession.builder \
+    .appName("LocalApp") \
+    .master("local[4]") \
+    .config("spark.driver.memory", "4g") \
+    .config("spark.driver.maxResultSize", "2g") \
+    .getOrCreate()
+
+# Use all available cores
+spark = SparkSession.builder \
+    .appName("LocalApp") \
+    .master("local[*]") \
+    .getOrCreate()
+
+# With all cores and 2 max retries
+spark = SparkSession.builder \
+    .appName("LocalApp") \
+    .master("local[*,2]") \
+    .getOrCreate()
+```
+
+**Use local mode when:**
+- Developing locally on your laptop
+- Testing code before sending to cluster
+- Debugging logic (fast iteration)
+- Data is small enough to fit in memory
+
+#### Remote Cluster Connection (Spark Connect)
+
+Connect from your machine to a remote cluster:
+
+```python
+from pyspark.sql import SparkSession
+
+# Connect to Spark Connect server on remote cluster
+spark = SparkSession.builder \
+    .remote("sc://cluster-host.example.com:15002") \
+    .getOrCreate()
+
+# With authentication (if required)
+spark = SparkSession.builder \
+    .remote("sc://cluster-host.example.com:15002") \
+    .config("spark.connect.auth", "token") \
+    .config("spark.connect.token", "YOUR_TOKEN") \
+    .getOrCreate()
+
+# Databricks-specific (Spark Connect)
+spark = SparkSession.builder \
+    .remote("databricks") \
+    .config("databricks_host", "https://your-instance.cloud.databricks.com") \
+    .config("databricks_token", "dapi...") \
+    .getOrCreate()
+```
+
+#### Mocking Cluster Behavior Locally
+
+For testing/development, simulate cluster behavior on your machine:
+
+```python
+from pyspark.sql import SparkSession
+
+# Simulate multi-partition processing
+spark = SparkSession.builder \
+    .appName("ClusterMock") \
+    .master("local[4]") \
+    .config("spark.sql.shuffle.partitions", "10") \
+    .config("spark.default.parallelism", "8") \
+    .getOrCreate()
+
+# Create a small dataset and repartition to simulate multi-node
+df = spark.createDataFrame([(i, f"row_{i}") for i in range(100)], ["id", "value"])
+
+# Simulate 4 partitions (like 4 executor nodes)
+df_repartitioned = df.repartition(4)
+
+# Show how many partitions (same as number of "executor nodes" in mock)
+print(f"Partitions (mock nodes): {df_repartitioned.rdd.getNumPartitions()}")
+
+# Test shuffle behavior locally
+result = df_repartitioned.groupBy("id").count()
+result.show()
+```
+
+**Mocking setup useful for:**
+- Testing shuffle behavior before cluster submission
+- Validating partition distribution logic
+- Catching skew problems early
+- Unit testing data pipelines
+
 ### Traditional Spark (Before Connect)
 
 ```
@@ -82,11 +186,63 @@ Worker nodes (run tasks)
 - **Enables Databricks SDKs** in Python, R, Scala
 - **Unified API** — Same code works in notebooks and remote clients
 
+### Local vs. Remote Configuration Comparison
+
+| Aspect | Local | Remote (Spark Connect) |
+|--------|-------|---|
+| **Setup** | `master("local[4]")` | `remote("sc://host:15002")` |
+| **Data size** | Small (fits in RAM) | Any size (distributed) |
+| **Latency** | None (same machine) | Network overhead |
+| **Parallelism** | Limited by cores | Unlimited (across cluster) |
+| **For testing** | Single-machine logic | Multi-node behavior requires mock setup |
+| **Memory constraint** | Your machine RAM | Cluster total memory |
+
+### SparkSession Configuration Options
+
+**Local Mode Options:**
+
+```python
+spark = SparkSession.builder \
+    .master("local[4]")                              # 4 cores
+    .config("spark.driver.memory", "8g")             # Driver memory
+    .config("spark.executor.memory", "4g")           # Executor memory
+    .config("spark.sql.shuffle.partitions", "4")     # Partitions for shuffle
+    .config("spark.default.parallelism", "4")        # RDD parallelism
+    .config("spark.driver.maxResultSize", "2g")      # Max result size
+    .config("spark.sql.adaptive.enabled", "true")    # Adaptive Query Execution
+    .appName("MyLocalApp") \
+    .getOrCreate()
+```
+
+**Remote Connection Options:**
+
+```python
+spark = SparkSession.builder \
+    .remote("sc://cluster-host:15002")               # Remote server
+    .config("spark.connect.timeout", "300s")         # Connection timeout
+    .config("spark.connect.retries", "3")            # Connection retries
+    .config("spark.connect.userAgent", "MyApp/1.0")  # User agent
+    .appName("MyRemoteApp") \
+    .getOrCreate()
+```
+
+**Key Configuration Parameters:**
+
+| Parameter | Default | Purpose | Local vs Remote |
+|-----------|---------|---------|---|
+| `spark.driver.memory` | 1g | Driver JVM memory | Local only |
+| `spark.executor.memory` | 1g | Executor memory per node | Local: single, Remote: per executor |
+| `spark.sql.shuffle.partitions` | 200 | Partitions after shuffle | Both (useful for mock testing) |
+| `spark.default.parallelism` | CPU cores | RDD parallelism | Local: machine cores, Remote: across cluster |
+| `spark.driver.maxResultSize` | 1g | Max result from collect() | Both (prevent driver OOM) |
+
 ### Common Mistakes
 
 1. **Confusing with Spark Submit** — Spark Connect is a communication layer; Spark Submit is a launcher
 2. **Thinking it replaces cluster mode** — Spark Connect still needs a cluster; you connect to it remotely
 3. **Using for all workloads** — Traditional Spark still better for large batch jobs; Spark Connect for interactive use
+4. **Running large jobs in local mode** — Local mode will OOM if data > machine RAM; use remote cluster instead
+5. **Forgetting to set partitions in mock** — For realistic mock testing, manually set `spark.sql.shuffle.partitions` to simulate cluster partitions
 
 ### Code Example: Connect to Remote Cluster
 
@@ -297,12 +453,18 @@ result.show()
 ## Summary: Section 6 Key Takeaways
 
 1. **Spark Connect**: Separates client from cluster; communicates via gRPC; enables remote development
-2. **Benefits of Spark Connect**: Lightweight, multi-language ready, isolated client/cluster
-3. **Local mode**: Everything on your machine; no cluster; development only
-4. **Client mode**: Driver on submission node; executors on cluster; interactive work (notebooks, shells)
-5. **Cluster mode**: Driver and executors on cluster; best for production batch jobs
-6. **Driver location matters**: Client mode = fast feedback; Cluster mode = efficient resources
-7. **On Databricks**: Notebooks are Client mode; jobs are Cluster mode; Spark Connect is emerging option
+2. **Local SparkSession**: Use `.master("local[n]")` for development/testing; limited by machine RAM
+3. **Remote Connection**: Use `.remote("sc://host:15002")` to connect to cluster from your machine
+4. **Mock Testing**: Set `spark.sql.shuffle.partitions` in local mode to simulate multi-node behavior
+5. **Configuration**: Key options include driver memory, executor memory, parallelism, and timeouts
+6. **When to use local**: Developing code, unit testing logic, small datasets
+7. **When to use remote**: Large datasets, production workloads, testing distributed behavior
+8. **Benefits of Spark Connect**: Lightweight, multi-language ready, isolated client/cluster
+9. **Local mode**: Everything on your machine; no cluster; development only
+10. **Client mode**: Driver on submission node; executors on cluster; interactive work (notebooks, shells)
+11. **Cluster mode**: Driver and executors on cluster; best for production batch jobs
+12. **Driver location matters**: Client mode = fast feedback; Cluster mode = efficient resources
+13. **On Databricks**: Notebooks are Client mode; jobs are Cluster mode; Spark Connect is emerging option
 
 ---
 

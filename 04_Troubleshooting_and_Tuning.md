@@ -137,7 +137,7 @@ result = large_df.join(broadcast(small_df), "key", "inner")
 
 **Note:** The value must include a unit suffix ("20mb" not just 20). Default is "10mb".
 
-### Out-of-Memory (OOM) Prevention Strategies (Q55)
+### Out-of-Memory (OOM) Prevention Strategies
 
 **OOM happens when:**
 - Executors run out of memory during shuffle, join, or broadcast

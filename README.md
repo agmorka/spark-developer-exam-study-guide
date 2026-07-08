@@ -1,1 +1,0 @@
-# spark-developer-exam-study-guide

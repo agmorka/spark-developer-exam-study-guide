@@ -145,7 +145,7 @@ df.withColumn("date_obj", to_date(col("date_string"))).show()
 df.withColumn("ts_obj", to_timestamp(col("date_string"))).show()
 ```
 
-**⚠️ Common mistakes (Q14):**
+**⚠️ Common mistakes:**
 ```python
 # WRONG: Direct assignment + wrong method
 df["transactionTimestamp"] = unix_timestamp("transactionDate", "yyyy-MM-dd")
@@ -282,7 +282,7 @@ df.select(
     cos(col("angle_rad")).alias("cos_rad")       # Cosine of radians
 ).show()
 
-# Example from Q35: convert to degrees, then take cosine, round to 2 decimals
+# Example: convert to degrees, then take cosine, round to 2 decimals
 df.select(
     round(cos(degrees(col("angle_rad"))), 2).alias("cos_degrees")
 ).show()
@@ -571,7 +571,7 @@ df.describe().show()
 # |    max| 99.99 | 999.99 |
 # +-------+-------+--------+
 
-# Method 2: summary() — specify which stats to include (more flexible) (Q32)
+# Method 2: summary() — specify which stats to include (more flexible)
 df.summary("count", "mean", "stddev", "25%", "50%", "75%", "min", "max").show()
 
 # Output (with percentiles):
@@ -1147,7 +1147,7 @@ schema = StructType([
 df.write.mode("overwrite").schema(schema).parquet("/output/data")
 ```
 
-#### Creating DataFrames with explicit types (Q9)
+#### Creating DataFrames with explicit types
 
 Use `createDataFrame()` with a schema that includes `FloatType` and other data types:
 
