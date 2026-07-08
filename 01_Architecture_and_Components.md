@@ -780,7 +780,7 @@ result = df.groupBy("dept").agg({"salary": "avg"})
 # 4. Result: 1000x faster than reading all data first
 ```
 
-### Stages and Shuffles with Disk I/O (Q43, Q47)
+### Stages and Shuffles with Disk I/O
 
 **What are stages?** A stage is a set of transformations that can run without shuffling data. Different stages CAN run in **parallel**.
 
@@ -798,7 +798,7 @@ Stage 3 (OrderBy): Another stage
 - BUT: Stages separated by shuffles MUST wait (shuffle is a barrier)
 - Each shuffle involves **disk I/O and network transfers** (very expensive)
 
-**Example (Q43 - Stages execute in parallel):**
+**Example - Stages execute in parallel:**
 
 ```
 Job: df.groupBy("dept").count().orderBy("count")
@@ -812,7 +812,7 @@ Stages 1, 2, 3 run sequentially (because of shuffles)
 But within each stage, tasks run in parallel
 ```
 
-**Shuffle mechanics (Q47 - Shuffles write to disk):**
+**Shuffle mechanics - Shuffles write to disk:**
 
 ```
 Without Shuffle (Map):
@@ -826,11 +826,11 @@ Partition 1 on Executor A:
 Executor B reads from Executor A's disk, brings data over network
 ```
 
-### Cluster Manager and Driver/Executor Lifecycle (Q49, Q52)
+### Cluster Manager and Driver/Executor Lifecycle
 
 **Cluster Manager:** Allocates resources (CPU cores, memory) to Spark. Examples: YARN, Kubernetes, Standalone, Mesos.
 
-**Driver Lifecycle (Q49):**
+**Driver Lifecycle:**
 1. **Start** — User submits Spark job; driver process starts
 2. **Create SparkContext** — Driver initializes SparkContext (or SparkSession)
 3. **Contact Cluster Manager** — Driver asks for executors ("I need 10 executors with 4 cores each")
@@ -838,7 +838,7 @@ Executor B reads from Executor A's disk, brings data over network
 5. **Execute Job** — Driver sends tasks to executors; monitors completion
 6. **End** — When job finishes, driver shuts down (or goes idle in REPL)
 
-**Executor Lifecycle (Q52):**
+**Executor Lifecycle:**
 1. **Launch** — Cluster manager starts executor JVM on worker node (initiated by driver)
 2. **Register** — Executor registers with driver
 3. **Execute Tasks** — Receives and runs tasks from driver
@@ -864,7 +864,7 @@ spark = SparkSession.builder.appName("MyApp").getOrCreate()
 # 4. Executors launched
 ```
 
-### Actions Return Data to Driver (Q51)
+### Actions Return Data to Driver
 
 **Actions like `.collect()` bring data from executors to driver memory.**
 
